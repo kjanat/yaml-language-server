@@ -11,11 +11,20 @@ import assert from 'assert';
 import * as path from 'path';
 import { createExpectedCompletion } from './utils/verifyError.js';
 import { ServiceSetup } from './utils/serviceSetup.js';
-import type { CompletionList, MarkupContent } from 'vscode-languageserver-types';
+import type { CompletionItem, CompletionList, MarkupContent } from 'vscode-languageserver-types';
 import { CompletionItemKind, InsertTextFormat, MarkupKind, Position } from 'vscode-languageserver-types';
+import { parseDocument } from 'yaml';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { expect } from 'chai';
 import type { SettingsState } from '../src/yamlSettings.js';
 import { TextDocumentTestManager } from '../src/yamlSettings.js';
+
+function applyCompletionEdit(content: string, item: CompletionItem): string {
+  if (!item.textEdit || !('range' in item.textEdit)) {
+    throw new Error('Expected a completion text edit with a range');
+  }
+  return TextDocument.applyEdits(TextDocument.create('file:///test.yaml', 'yaml', 1, content), [item.textEdit]);
+}
 import type { LanguageService } from '../src/index.js';
 import type { LanguageHandlers } from '../src/languageserver/handlers/languageHandlers.js';
 
@@ -116,6 +125,163 @@ describe('Auto Completion Tests', () => {
             documentation: '',
           })
         );
+      });
+
+      it('offers a labelled nested expansion for dotted key shorthand', async () => {
+        schemaProvider.addSchema(SCHEMA_ID, {
+          $defs: {
+            rules: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    security: {
+                      oneOf: [
+                        {
+                          anyOf: [{ type: 'string', enum: ['on', 'off'] }, { type: 'boolean' }],
+                        },
+                        {
+                          type: 'object',
+                          properties: {
+                            level: { type: 'string' },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    security: {
+                      oneOf: [
+                        {
+                          anyOf: [{ type: 'string', enum: ['on', 'off'] }, { type: 'boolean' }],
+                        },
+                        {
+                          type: 'object',
+                          properties: {
+                            level: { type: 'string' },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          type: 'object',
+          properties: {
+            lint: {
+              type: 'object',
+              properties: {
+                rules: {
+                  $ref: '#/$defs/rules',
+                },
+              },
+            },
+            'lint.rules.security': {
+              type: 'string',
+            },
+          },
+        });
+
+        const content = 'lint.rules.';
+        const completion = await parseSetup(content, content.length);
+        const expansion = completion.items.find((item) => item.label === 'Expand security (lint.rules.security)');
+        const literal = completion.items.find((item) => item.label === 'lint.rules.security');
+
+        expect(literal).to.not.undefined;
+        expect(expansion, completion.items.map((item) => item.label).join(', ')).to.not.undefined;
+        expect(expansion.insertText).to.equal('lint:\n  rules:\n    security: ');
+        const expandedText = applyCompletionEdit(content, expansion);
+        expect(expandedText).to.equal('lint:\n  rules:\n    security: ');
+        const expandedDocument = parseDocument(expandedText);
+        expect(expandedDocument.errors).to.have.length(0);
+        expect(expandedDocument.toJS()).to.deep.equal({ lint: { rules: { security: null } } });
+        const valueCompletion = await parseSetup('lint:\n  rules:\n    security: ', 'lint:\n  rules:\n    security: '.length);
+        expect(valueCompletion.items.some((item) => item.label.replace(/^['"]|['"]$/g, '') === 'on')).to.equal(true);
+      });
+
+      it('expands nested shorthand and avoids unsafe contexts and existing mappings', async () => {
+        schemaProvider.addSchema(SCHEMA_ID, {
+          type: 'object',
+          properties: {
+            security: {
+              type: 'object',
+              properties: {
+                on: {
+                  type: 'boolean',
+                },
+              },
+            },
+            value: {
+              type: 'string',
+            },
+          },
+        });
+
+        const content = 'security.';
+        const completion = await parseSetup(content, content.length);
+        const expansion = completion.items.find((item) => item.label === 'Expand on (security.on)');
+        expect(expansion).to.not.undefined;
+        expect(expansion.insertText).to.equal('security:\n  "on": ');
+        const expandedText = applyCompletionEdit(content, expansion);
+        expect(expandedText).to.equal('security:\n  "on": ');
+        const expandedDocument = parseDocument(expandedText);
+        expect(expandedDocument.errors).to.have.length(0);
+        expect(expandedDocument.toJS()).to.deep.equal({ security: { on: null } });
+
+        for (const content of [
+          'value: security.',
+          '# security.',
+          '"security."',
+          '"security.": ',
+          'value: |\n  security.',
+          'security:\n  on: true\nsecurity.',
+        ]) {
+          const position = content.startsWith('"') ? content.indexOf('"', 1) : content.length;
+          const unsafe = await parseSetup(content, position);
+          expect(
+            unsafe.items.some((item) => item.label.startsWith('Expand ')),
+            content
+          ).to.equal(false);
+        }
+      });
+
+      it('preserves CRLF and current indentation in nested expansions', async () => {
+        schemaProvider.addSchema(SCHEMA_ID, {
+          type: 'object',
+          properties: {
+            settings: {
+              type: 'object',
+              properties: {
+                security: {
+                  type: 'object',
+                  properties: {
+                    enabled: {
+                      type: 'boolean',
+                    },
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const content = 'settings:\r\n  # preserve this comment\r\n  security.';
+        const completion = await parseSetup(content, content.length);
+        const expansion = completion.items.find((item) => item.label === 'Expand enabled (security.enabled)');
+
+        expect(expansion, completion.items.map((item) => item.label).join(', ')).to.not.undefined;
+        expect(expansion.insertText).to.equal('security:\r\n    enabled: ');
+        const expandedText = applyCompletionEdit(content, expansion);
+        expect(expandedText).to.equal('settings:\r\n  # preserve this comment\r\n  security:\r\n    enabled: ');
+        expect(expandedText).to.include('# preserve this comment');
+        const expandedDocument = parseDocument(expandedText);
+        expect(expandedDocument.errors).to.have.length(0);
+        expect(expandedDocument.toJS()).to.deep.equal({ settings: { security: { enabled: null } } });
       });
 
       it('Autocomplete on default value (without :)', async () => {

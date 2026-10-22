@@ -33,6 +33,37 @@ Schema validation supports JSON Schema `draft-04`, `draft-07`, `2019-09`, and `2
 
 Completion and hover content are schema-driven. See [Associating schemas](#associating-schemas) for configuration details.
 
+## Trial builds
+
+Pull requests and branch pushes on the `kjanat/yaml-language-server` fork publish installable previews. The PR comment contains a commit-specific URL. Use that URL to install the CLI into a scratch project:
+
+```sh
+npm install https://pkg.pr.new/kjanat/yaml-language-server/yaml-language-server@<commit-sha>
+npx yaml-language-server --stdio
+```
+
+For a direct one-shot launch, use `npx https://pkg.pr.new/kjanat/yaml-language-server/yaml-language-server@<commit-sha> --stdio`.
+
+To try the preview in Zed, install it in a scratch project, then point Zed at the installed package binary in `settings.json`:
+
+```jsonc
+{
+  "lsp": {
+    "yaml-language-server": {
+      "binary": {
+        "path": "/absolute/path/to/node",
+        "arguments": [
+          "/absolute/path/to/project/node_modules/yaml-language-server/bin/yaml-language-server",
+          "--stdio"
+        ]
+      }
+    }
+  }
+}
+```
+
+The trial adds schema-aware editor shorthand such as `lint.rules.|`; selecting an expansion inserts nested YAML mappings. Dotted YAML keys remain ordinary keys.
+
 ## Language server settings
 
 The server supports the following settings supplied by LSP clients:

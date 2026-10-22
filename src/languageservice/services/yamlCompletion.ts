@@ -546,7 +546,8 @@ export class YamlCompletion {
           textBuffer,
           overwriteRange,
           doComplete,
-          ignoreScalars
+          ignoreScalars,
+          !isInComment(doc.tokens, offset)
         );
 
         if (!schema && currentWord.length > 0 && text.charAt(offset - currentWord.length - 1) !== '"') {
@@ -702,7 +703,8 @@ export class YamlCompletion {
     textBuffer: TextBuffer,
     overwriteRange: Range,
     doComplete: boolean,
-    ignoreScalars: boolean
+    ignoreScalars: boolean,
+    allowDottedKeyCompletion: boolean
   ): void {
     const matchingSchemas = doc.getMatchingSchemas(schema.schema, -1, null, doComplete);
     const existingKey = textBuffer.getText(overwriteRange);
@@ -836,6 +838,16 @@ export class YamlCompletion {
               }
             }
           }
+        }
+        const dottedPrefix = textBuffer.getText(overwriteRange);
+        const dottedLine = textBuffer.getLineContent(overwriteRange.start.line);
+        const isQuoted =
+          ['"', "'"].includes(dottedLine.charAt(overwriteRange.start.character - 1)) ||
+          ['"', "'"].includes(dottedLine.charAt(overwriteRange.end.character));
+        if (allowDottedKeyCompletion && !isQuoted && /^[^'"\s:]+\.$/.test(dottedPrefix)) {
+          const linePrefix = dottedLine.match(/^[ \t]*/)?.[0] ?? '';
+          const newline = textBuffer.getText().includes('\r\n') ? '\r\n' : '\n';
+          this.addDottedKeyCompletions(schema.schema, dottedPrefix.slice(0, -1).split('.'), node, collector, linePrefix, newline);
         }
         // Error fix
         // If this is a array of string/boolean/number
@@ -1738,6 +1750,100 @@ export class YamlCompletion {
     }
 
     return 0;
+  }
+
+  private addDottedKeyCompletions(
+    schema: JSONSchema,
+    path: string[],
+    node: YAMLMap,
+    collector: CompletionsCollector,
+    linePrefix: string,
+    newline: string
+  ): void {
+    const propertySchemas = (candidate: JSONSchemaRef, seen = new Set<JSONSchema>()): JSONSchema[] => {
+      if (!candidate || typeof candidate !== 'object') {
+        return [];
+      }
+      if (seen.has(candidate)) {
+        return [];
+      }
+      seen.add(candidate);
+      const result = [candidate];
+      for (const branch of [...(candidate.allOf ?? []), ...(candidate.anyOf ?? []), ...(candidate.oneOf ?? [])]) {
+        result.push(...propertySchemas(branch, seen));
+      }
+      return result;
+    };
+
+    const childrenFor = (schemas: JSONSchema[], key: string): JSONSchema[] => {
+      const children: JSONSchema[] = [];
+      for (const candidate of schemas) {
+        const child = candidate.properties?.[key];
+        if (child && typeof child === 'object') {
+          children.push(...propertySchemas(child));
+        }
+      }
+      return children;
+    };
+
+    let current = propertySchemas(schema);
+    for (const part of path) {
+      current = childrenFor(current, part);
+      if (current.length === 0) {
+        return;
+      }
+    }
+
+    const existingTopLevelKeys = new Set<string>();
+    for (const pair of node.items) {
+      if (isScalar(pair.key)) {
+        existingTopLevelKeys.add(String(pair.key.value));
+      }
+    }
+    if (existingTopLevelKeys.has(path[0])) {
+      return;
+    }
+
+    const candidates = new Map<string, JSONSchema>();
+    for (const parent of current) {
+      for (const [key, child] of Object.entries(parent.properties ?? {})) {
+        if (typeof child === 'object' && !child.deprecationMessage && !child.doNotSuggest) {
+          candidates.set(key, child);
+        }
+      }
+    }
+
+    for (const [key, child] of candidates) {
+      const fullPath = [...path, key];
+      let insertText = '';
+      for (const [index, pathPart] of fullPath.entries()) {
+        const indent = index === 0 ? '' : linePrefix + this.indentation.repeat(index);
+        if (index === fullPath.length - 1) {
+          const renderedKey = this.getInsertTextForValue(pathPart, '', 'string');
+          const propertyText = this.getInsertTextForProperty(
+            pathPart,
+            child,
+            '',
+            linePrefix + this.indentation.repeat(index + 1)
+          );
+          const leafText = propertyText.startsWith(`${renderedKey}:`) ? propertyText : `${renderedKey}: `;
+          insertText += indent + leafText.replace(/\n/g, newline);
+        } else {
+          insertText += `${indent}${this.getInsertTextForValue(pathPart, '', 'string')}:${newline}`;
+        }
+      }
+      collector.add(
+        {
+          kind: CompletionItemKind.Property,
+          label: `Expand ${key} (${fullPath.join('.')})`,
+          detail: l10n.t('Expand dotted shorthand to nested YAML mappings'),
+          documentation: this.fromMarkup('Creates nested YAML mappings for `' + fullPath.join('.') + '`.'),
+          insertText,
+          insertTextFormat: InsertTextFormat.Snippet,
+        },
+        false
+      );
+    }
   }
 
   private getPropertyNamesCandidates(schema: JSONSchemaRef): { candidates: string[]; impossible: boolean } {
