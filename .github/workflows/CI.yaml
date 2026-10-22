@@ -33,7 +33,7 @@ jobs:
       - name: Use Node 22.13.0
         uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: '22.13.0'
           registry-url: 'https://registry.npmjs.org'
 
       # Run install dependencies
@@ -52,7 +52,7 @@ jobs:
 
       - name: Upload SARIF file
         if: matrix.os == 'ubuntu-latest'
-        uses: github/codeql-action/upload-sarif@17573ee1cc1b9d061760f3a006fc4aac4f944fd5 #v2
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           # Path to SARIF file relative to the root of the repository
           sarif_file: eslint-result.sarif
@@ -67,7 +67,7 @@ jobs:
         # Run Coveralls
       - name: Coveralls
         if: matrix.os == 'ubuntu-latest'
-        uses: coverallsapp/github-action@c7885c00cb7ec0b8f9f5ff3f53cddb980f7a4412 # v2.2.0
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true

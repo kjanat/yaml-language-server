@@ -16,7 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: ${{ github.ref != 'refs/heads/main'}}
+    if: ${{ github.ref != 'refs/heads/main' }}
     name: 'Publish Release'
     steps:
     - uses: actions/checkout@v7
@@ -29,7 +29,7 @@ jobs:
         registry-url: 'https://registry.npmjs.org'
 
     - name: Use npm 12
-      run: npm install npm@^12 -g
+      run: npm install 'npm@^12' -g
 
     - name: Install dependencies
       run: npm ci
@@ -44,9 +44,8 @@ jobs:
       run: npm run check-dependencies
 
     - name: Publish Release to npm
-      run: |
-        echo "npm version $(npm -v)"
-        NODE_AUTH_TOKEN="" npm publish --access public --provenance
+      run: echo "npm version $(npm -v)";
+        env -u NODE_AUTH_TOKEN npm publish --access public --provenance
 
       # Get the current package.json version so we can tag the image correctly
     - name: Get current package.json version
@@ -55,15 +54,15 @@ jobs:
 
       # Setup QEMU as requirement for docker
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v1
+      uses: docker/setup-qemu-action@v4
       
       # Setup DockerBuildx as requirement for docker
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v1
+      uses: docker/setup-buildx-action@v4
 
       # Login to Quay
     - name: Login to Quay
-      uses: docker/login-action@v1
+      uses: docker/login-action@v4
       with:
         registry: quay.io
         username: ${{ secrets.QUAY_USERNAME }}
@@ -71,7 +70,7 @@ jobs:
 
       # Build and push the latest version of yaml language server image
     - name: Build and push
-      uses: docker/build-push-action@v2
+      uses: docker/build-push-action@v7
       with:
         context: .
         file: ./Dockerfile
@@ -83,7 +82,7 @@ jobs:
   
   prerelease:
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main'}}
+    if: ${{ github.ref == 'refs/heads/main' && github.owner == 'redhat-developer' }}
     name: 'Publish Prerelease'
     steps:
     - uses: actions/checkout@v7
@@ -113,18 +112,18 @@ jobs:
       run: |
         echo "npm version $(npm -v)"
         npm version prerelease --preid $(git rev-parse --short HEAD) --no-git-tag-version
-        NODE_AUTH_TOKEN="" npm publish --tag next --provenance
+        env -u NODE_AUTH_TOKEN npm publish --tag next --provenance
     
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@2b82ce82d56a2a04d2637cd93a637ae1b359c0a7 # v2.2.0
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       # Setup DockerBuildx as requirement for docker
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@6a58db7e0d21ca03e6c44877909e80e45217eed2 # v2.6.0
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # Login to Quay
     - name: Login to Quay
-      uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc  # v2.2.0
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
       with:
         registry: quay.io
         username: ${{ secrets.QUAY_USERNAME }}
@@ -132,7 +131,7 @@ jobs:
 
       # Build and push the latest version of yaml language server image
     - name: Build and push
-      uses: docker/build-push-action@44ea916f6c540f9302d50c2b1e5a8dc071f15cdf #v4.1.0
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       with:
         context: .
         file: ./Dockerfile
